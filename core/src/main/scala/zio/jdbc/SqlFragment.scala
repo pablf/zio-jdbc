@@ -175,15 +175,12 @@ sealed trait SqlFragment { self =>
       .scoped(for {
         connection <- ZIO.service[ZConnection]
         _          <- connection.executeSqlWith(self) { ps =>
-                        ZIO.attempt(ps.executeUpdate()).refineOrDie { case e: SQLException =>
-                          ZSQLException(e)
+                        ZIO.attempt(ps.executeUpdate()).refineOrDie {
+                          case e: SQLTimeoutException => ZSQLTimeoutException(e)
+                          case e: SQLException        => ZSQLException(e)
                         }
                       }
       } yield ())
-      .refineOrDie {
-        case e: SQLTimeoutException => ZSQLTimeoutException(e)
-        case e: SQLException        => ZSQLException(e)
-      }
 
   /**
    * Executes a SQL delete query.
