@@ -104,9 +104,9 @@ object ZConnectionPool {
                     props.foreach { case (k, v) => properties.setProperty(k, v) }
 
                     java.sql.DriverManager.getConnection(url, properties)
-                  }.refineOrDie { 
+                  }.refineOrDie {
                     case e: SQLTimeoutException => ConnectionTimeout(e)
-                    case e: SQLException => DBError(e)
+                    case e: SQLException        => DBError(e)
                   }
         zenv   <- make(acquire).build.provideSome[Scope](ZLayer.succeed(ZConnectionPoolConfig.default))
       } yield zenv.get[ZConnectionPool]

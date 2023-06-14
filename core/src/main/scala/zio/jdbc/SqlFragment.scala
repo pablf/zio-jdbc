@@ -174,7 +174,7 @@ sealed trait SqlFragment { self =>
     def executePs(ps: PreparedStatement): IO[QueryException, Int] =
       ZIO.attempt(ps.executeUpdate()).refineOrDie {
         case e: SQLTimeoutException => ZSQLTimeoutException(e)
-        case e: SQLException => ZSQLException(e)
+        case e: SQLException        => ZSQLException(e)
       }
     ZIO.scoped(for {
       connection <- ZIO.service[ZConnection]
@@ -210,7 +210,7 @@ sealed trait SqlFragment { self =>
     count      <- connection.executeSqlWith(sql) { ps =>
                     ZIO.attempt(ps.executeLargeUpdate()).refineOrDie {
                       case e: SQLTimeoutException => ZSQLTimeoutException(e)
-                      case e: SQLException => ZSQLException(e)
+                      case e: SQLException        => ZSQLException(e)
                     }
                   }
   } yield count
@@ -226,7 +226,7 @@ sealed trait SqlFragment { self =>
                                         (rowsUpdated, ZResultSet(updatedKeys))
                                       }.refineOrDie {
                                         case e: SQLTimeoutException => ZSQLTimeoutException(e)
-                                        case e: SQLException => ZSQLException(e)
+                                        case e: SQLException        => ZSQLException(e)
                                       })(_._2.close)
                         (count, rs) = result
                         keys       <- ZIO.attempt {
