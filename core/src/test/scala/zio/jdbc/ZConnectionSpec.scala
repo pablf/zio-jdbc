@@ -13,7 +13,6 @@ import java.sql.{
   DatabaseMetaData,
   NClob,
   PreparedStatement,
-  SQLException,
   SQLWarning,
   SQLXML,
   Savepoint,
