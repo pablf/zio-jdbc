@@ -33,13 +33,13 @@ sealed trait JdbcException extends Exception
  */
 sealed trait ConnectionException extends JdbcException
 sealed trait QueryException extends JdbcException
-sealed trait CodecException extends JdbcException with QueryException with FatalException
+sealed trait CodecException extends JdbcException with QueryException
 
 sealed trait FatalException extends JdbcException
 sealed trait RecoverableException extends JdbcException
 
 // ZTimeoutException groups all the errors produced by SQLTimeoutException.
-sealed trait ZTimeoutException extends JdbcException with RecoverableException
+sealed trait ZTimeoutException extends JdbcException
 
 /**
  * ConnectionException. Related to the connection operations with a database
@@ -49,12 +49,12 @@ final case class DriverNotFound(cause: Throwable, driver: String)
     with ConnectionException with FatalException
 final case class DBError(cause: Throwable) extends Exception(cause) with ConnectionException with FatalException
 final case class FailedMakingRestorable(cause: Throwable) extends Exception(cause) with ConnectionException with FatalException
-final case class ConnectionTimeout(cause: Throwable) extends Exception(cause) with ConnectionException with ZTimeoutException
+final case class ConnectionTimeout(cause: Throwable) extends Exception(cause) with ConnectionException with ZTimeoutException with RecoverableException
 
 /**
  * CodecExceptions. Related to the decoding and encoding of the data in a transaction
  */
-final case class DecodeException(cause: Throwable) extends Exception(cause) with CodecException
+final case class DecodeException(cause: Throwable) extends Exception(cause) with CodecException with FatalException
 final case class JdbcDecoderError(
   message: String,
   cause: Throwable,
@@ -62,14 +62,14 @@ final case class JdbcDecoderError(
   row: Int,
   column: Option[Int] = None
 ) extends IOException(message, cause)
-    with CodecException
+    with CodecException with FatalException
 final case class JdbcEncoderError(message: String, cause: Throwable)
     extends IOException(message, cause)
-    with CodecException
+    with CodecException with FatalException
 
 /**
  * FailedQueries. Related to the failure of actions executed directly on a database
  */
-final case class ZSQLException(cause: SQLException) extends Exception(cause) with QueryException with RetryableException
-final case class ZSQLTimeoutException(cause : SQLTimeoutException) extends Exception(cause) with QueryException with RecoverableException with ZTimeoutException
+final case class ZSQLException(cause: SQLException) extends Exception(cause) with QueryException with RecoverableException
+final case class ZSQLTimeoutException(cause : SQLTimeoutException) extends Exception(cause) with QueryException with ZTimeoutException with RecoverableException
 
