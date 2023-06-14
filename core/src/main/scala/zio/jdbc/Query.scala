@@ -74,7 +74,7 @@ final case class Query[+A](decode: ZResultSet => IO[CodecException, A], sql: Sql
   def withDecode[B](f: ZResultSet => B): Query[B] =
     Query(sql, f)
 
-  private def executeQuery(sql: SqlFragment): ZIO[Scope with ZConnection, QueryException, ZResultSet] = for {
+  private[jdbc] def executeQuery(sql: SqlFragment): ZIO[Scope with ZConnection, QueryException, ZResultSet] = for {
     connection <- ZIO.service[ZConnection]
     zrs        <- connection.executeSqlWith(sql) { ps =>
                     ZIO.acquireRelease {
