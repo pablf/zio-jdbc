@@ -15,12 +15,9 @@
  */
 package zio.jdbc
 
-import zio._
-
 import java.io.IOException
-import java.sql.{ Connection, ResultSetMetaData, SQLException }
+import java.sql.{ ResultSetMetaData, SQLException }
 import java.sql.SQLTimeoutException
-import java.util.concurrent.TimeoutException
 
 
 
