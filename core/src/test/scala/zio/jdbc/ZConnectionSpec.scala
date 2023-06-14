@@ -1,26 +1,27 @@
 package zio.jdbc
 
 import zio.test._
+import zio.{ Random, RuntimeFlags, ZIO }
 
+import java.io.{ InputStream, Reader }
+import java.net.URL
 import java.sql.{
-  Connection,
-  SQLXML,
-  DatabaseMetaData,
-  PreparedStatement,
-  Struct,
   Blob,
-  Statement,
-  NClob,
   CallableStatement,
-  Savepoint,
+  Clob,
+  Connection,
+  DatabaseMetaData,
+  NClob,
+  PreparedStatement,
+  SQLException,
   SQLWarning,
-  Clob
+  SQLXML,
+  Savepoint,
+  Statement,
+  Struct
 }
 import java.util.{ Properties, concurrent }
 import java.{ sql, util }
-import java.io.{ InputStream, Reader }
-import java.net.URL
-import zio.{ ZIO, RuntimeFlags, Random }
 
 object ZConnectionSpec extends ZIOSpecDefault {
 
@@ -48,8 +49,11 @@ object ZConnectionSpec extends ZIOSpecDefault {
                 create table users_no_id (
                 name varchar not null,
                 age int not null
-                )""")(ps => ZIO.fail(new DummyException("Error Ocurred", ps, ps.isClosed())))
-                  .catchSome { case e: DummyException => ZIO.succeed((e.preparedStatement, e.closedInScope)) }
+                )""")(ps => ZIO.succeed(new DummyException("Error Ocurred", ps, ps.isClosed())))
+                  .flatMap {
+                    case e: DummyException => ZIO.succeed((e.preparedStatement, e.closedInScope))
+                    case e                 => ZIO.fail(e)
+                  }
             } yield assertTrue(statementClosedTuple._1.isClosed() && !statementClosedTuple._2)
           } //A bit of a hack, DummyException receives the prepared Statement so that its closed State can be checked outside ZConnection's Scope
         }
@@ -236,7 +240,7 @@ object ZConnectionSpec extends ZIOSpecDefault {
 
     override def executeUpdate(sql: String) = ???
 
-    override def close() = closed = true
+    override def close(): Unit = closed = true
 
     override def getMaxFieldSize() = ???
 

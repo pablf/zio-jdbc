@@ -1,5 +1,9 @@
 package zio.jdbc
 
+import zio.RuntimeFlags
+
+import java.io.{ InputStream, Reader }
+import java.net.URL
 import java.sql.{
   Blob,
   CallableStatement,
@@ -8,18 +12,15 @@ import java.sql.{
   DatabaseMetaData,
   NClob,
   PreparedStatement,
+  ResultSet,
   SQLWarning,
   SQLXML,
   Savepoint,
   Statement,
-  Struct,
-  ResultSet
+  Struct
 }
 import java.util.{ Properties, concurrent }
 import java.{ sql, util }
-import java.io.{ InputStream, Reader }
-import java.net.URL
-import zio.RuntimeFlags
 
 class TestConnection(failNext: Boolean = false, elems: Int = 0) extends Connection { self =>
 
@@ -375,7 +376,7 @@ class DummyResultSet(failNext: Boolean, elems: Int) extends ResultSet {
 
   override def isWrapperFor(x$1: Class[_ <: Object]) = ???
 
-  override def next() =
+  override def next(): Boolean =
     if (failNext) {
       throw new sql.SQLException()
     } else if (currentElem < elems) {
@@ -385,7 +386,7 @@ class DummyResultSet(failNext: Boolean, elems: Int) extends ResultSet {
       false
     }
 
-  override def close() = closed = true
+  override def close(): Unit = closed = true
 
   override def wasNull() = ???
 

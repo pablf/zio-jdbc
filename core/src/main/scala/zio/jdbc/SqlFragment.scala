@@ -171,12 +171,16 @@ sealed trait SqlFragment { self =>
    * Executes a SQL statement, such as one that creates a table.
    */
   def execute: ZIO[ZConnection, QueryException, Unit] =
-    ZIO.scoped(for {
-      connection <- ZIO.service[ZConnection]
-      _          <- connection.executeSqlWith(self) { ps =>
-                      executePs(ps)
-                    }
-    } yield ()).refineOrDie {
+    ZIO
+      .scoped(for {
+        connection <- ZIO.service[ZConnection]
+        _          <- connection.executeSqlWith(self) { ps =>
+                        ZIO.attempt(ps.executeUpdate()).refineOrDie { case e: SQLException =>
+                          ZSQLException(e)
+                        }
+                      }
+      } yield ())
+      .refineOrDie {
         case e: SQLTimeoutException => ZSQLTimeoutException(e)
         case e: SQLException        => ZSQLException(e)
       }
@@ -228,15 +232,17 @@ sealed trait SqlFragment { self =>
     for {
       connection <- ZIO.service[ZConnection]
       result     <- connection.executeSqlWith(sql) { ps =>
-                      ZIO.acquireRelease(ZIO.attempt {
-                        val rowsUpdated = ps.executeLargeUpdate()
-                        val updatedKeys = ps.getGeneratedKeys
-                        (rowsUpdated, ZResultSet(updatedKeys))
+                      ZIO
+                        .acquireRelease(ZIO.attempt {
+                          val rowsUpdated = ps.executeLargeUpdate()
+                          val updatedKeys = ps.getGeneratedKeys
+                          (rowsUpdated, ZResultSet(updatedKeys))
 
-                      })(_._2.close)
-                    }.refineOrDie {
-                      case e: SQLTimeoutException => ZSQLTimeoutException(e)
-                      case e: SQLException        => ZSQLException(e)
+                        })(_._2.close)
+                        .refineOrDie {
+                          case e: SQLTimeoutException => ZSQLTimeoutException(e)
+                          case e: SQLException        => ZSQLException(e)
+                        }
                     }
     } yield result
 
