@@ -74,12 +74,13 @@ final case class Query[+A](decode: ZResultSet => IO[CodecException, A], sql: Sql
   def withDecode[B](f: ZResultSet => B): Query[B] =
     Query(sql, f)
 
-  private def executeQuery(sql: SqlFragment): ZIO[Scope with ZConnection, ZSQLException, ZResultSet] = for {
+  private def executeQuery(sql: SqlFragment): ZIO[Scope with ZConnection, QueryException, ZResultSet] = for {
     connection <- ZIO.service[ZConnection]
     zrs        <- connection.executeSqlWith(sql) { ps =>
                     ZIO.acquireRelease {
-                      ZIO.attempt(ZResultSet(ps.executeQuery())).refineOrDie { case e: SQLException =>
-                        ZSQLException(e)
+                      ZIO.attempt(ZResultSet(ps.executeQuery())).refineOrDie {
+                        case e: SQLTimeoutException => ZTimeoutException(e)
+                        case e: SQLException => ZSQLTimeoutException(e)
                       }
                     }(_.close)
                   }

@@ -19,29 +19,40 @@ import zio._
 
 import java.io.IOException
 import java.sql.{ Connection, ResultSetMetaData, SQLException }
+import java.sql.SQLTimeoutException
+import java.util.concurrent.TimeoutException
+
+
+
 
 /**
  * Trait to encapsule all the exceptions employed by ZIO JDBC
  */
 sealed trait JdbcException extends Exception
 
+
+/**
+ * Exceptions subtraits to specify the type of error
+ */
 sealed trait ConnectionException extends JdbcException
-sealed trait QueryException      extends JdbcException
+sealed trait QueryException extends JdbcException
+sealed trait CodecException extends JdbcException with QueryException with FatalException
+
+sealed trait FatalException extends JdbcException
+sealed trait RecoverableException extends JdbcException
+
+// ZTimeoutException groups all the errors produced by SQLTimeoutException.
+sealed trait ZTimeoutException extends JdbcException with RecoverableException
 
 /**
  * ConnectionException. Related to the connection operations with a database
  */
 final case class DriverNotFound(cause: Throwable, driver: String)
     extends Exception(s"Could not found driver: $driver", cause)
-    with ConnectionException
-final case class FailedToConnect(cause: Throwable)        extends Exception(cause) with ConnectionException
-final case class FailedMakingRestorable(cause: Throwable) extends Exception(cause) with ConnectionException
-
-/**
- * QueryExceptions. Related to transactions
- */
-sealed trait CodecException extends QueryException
-sealed trait FailedQuery    extends QueryException
+    with ConnectionException with FatalException
+final case class DBError(cause: Throwable) extends Exception(cause) with ConnectionException with FatalException
+final case class FailedMakingRestorable(cause: Throwable) extends Exception(cause) with ConnectionException with FatalException
+final case class ConnectionTimeout(cause: Throwable) extends Exception(cause) with ConnectionException with ZTimeoutException
 
 /**
  * CodecExceptions. Related to the decoding and encoding of the data in a transaction
@@ -62,7 +73,6 @@ final case class JdbcEncoderError(message: String, cause: Throwable)
 /**
  * FailedQueries. Related to the failure of actions executed directly on a database
  */
-final case class ZSQLException(cause: SQLException) extends Exception(cause) with FailedQuery
-final case class FailedAccess[+A](cause: Throwable, f: Connection => ZIO[Scope, Throwable, A])
-    extends Exception(cause)
-    with FailedQuery
+final case class ZSQLException(cause: SQLException) extends Exception(cause) with QueryException with RetryableException
+final case class ZSQLTimeoutException(cause : SQLTimeoutException) extends Exception(cause) with QueryException with RecoverableException with ZTimeoutException
+

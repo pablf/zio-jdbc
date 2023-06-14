@@ -27,18 +27,18 @@ import java.sql.{ Connection, PreparedStatement, SQLException, Statement }
  */
 final class ZConnection(private[jdbc] val underlying: ZConnection.Restorable) extends AnyVal {
 
-  def access[A](f: Connection => A): IO[FailedAccess[A], A] =
-    ZIO.scoped {
-      accessZIO(f.andThen(ZIO.attempt(_)))
-    }
+  def access[A](f: Connection => A): ZIO[Any, Throwable, A] =
+    ZIO.attemptBlocking(f(underlying))
 
-  def accessZIO[A](f: Connection => ZIO[Scope, Throwable, A]): ZIO[Scope, FailedAccess[A], A] =
-    ZIO.blocking(f(underlying)).refineOrDie { case e: SQLException =>
-      FailedAccess(e, f)
-    }
+  def accessZIO[A](f: Connection => ZIO[Scope, Throwable, A]): ZIO[Scope, Throwable, A] =
+    ZIO.blocking(f(underlying))
 
-  def close: ZIO[Scope, FailedAccess[Unit], Any]    = access(_.close())
-  def rollback: ZIO[Scope, FailedAccess[Unit], Any] = access(_.rollback())
+  def close: ZIO[Scope, ZSQLException, Any]    = access(_.close()).refineOrDie { case e: SQLException =>
+      ZSQLException(e)
+    }
+  def rollback: ZIO[Scope, ZSQLException, Any] = access(_.rollback()).refineOrDie { case e: SQLException =>
+      ZSQLException(e)
+    }
 
   private[jdbc] def executeSqlWith[A](
     sql: SqlFragment
@@ -77,13 +77,10 @@ final class ZConnection(private[jdbc] val underlying: ZConnection.Restorable) ex
                                      }
         result                    <- f(statement)
       } yield result
-    }.refineOrDie { case err @ FailedAccess(e, _) =>
-      e match {
-        case sqlEx: SQLException => ZSQLException(sqlEx)
-        case _                   => err
-        case e: SQLException     => ZSQLException(e)
-      }
-    }.refineToOrDie[ZSQLException].tapErrorCause {
+    }.refineOrDie {
+      case e: SQLTimeoutException => ZSQLTimeoutException(e)
+      case e: SQLException => ZSQLException(e)  
+    }.tapErrorCause {
       cause => // TODO: Question: do we want logging here, switch to debug for now
         ZIO.logAnnotate("SQL", sql.toString)(
           ZIO.logDebugCause(s"Error executing SQL due to: ${cause.prettyPrint}", cause)
@@ -100,12 +97,15 @@ final class ZConnection(private[jdbc] val underlying: ZConnection.Restorable) ex
    * @param zc the connection to look into
    * @return true if the connection is alive (valid), false otherwise
    */
-  def isValid(): ZIO[Scope, FailedAccess[Any], Boolean] =
+  def isValid(): ZIO[Scope, ZSQLException, Boolean] = {
     for {
       closed    <- access(_.isClosed)
       statement <- access(_.prepareStatement("SELECT 1"))
       isAlive   <- ZIO.succeed(!closed && statement != null)
     } yield isAlive
+  }.refineOrDie { case e: SQLException =>
+      ZSQLException(e)
+    }
 
   /**
    * Returns whether the connection is still alive or not, providing a timeout,
@@ -116,8 +116,10 @@ final class ZConnection(private[jdbc] val underlying: ZConnection.Restorable) ex
    * @param zc the connection to look into
    * @return true if the connection is alive (valid), false otherwise
    */
-  def isValid(timeout: Int): ZIO[Scope, FailedAccess[Boolean], Boolean] =
-    access(_.isValid(timeout))
+  def isValid(timeout: Int): ZIO[Scope, ZSQLException, Boolean] =
+    access(_.isValid(timeout)).refineOrDie { case e: SQLException =>
+      ZSQLException(e)
+    }
 
   private[jdbc] def restore: UIO[Unit] =
     ZIO.succeed(underlying.restore())
