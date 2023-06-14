@@ -18,7 +18,7 @@ package zio.jdbc
 import zio._
 import zio.jdbc.SqlFragment.Segment
 
-import java.sql.{ PreparedStatement, SQLException, Types }
+import java.sql.{ PreparedStatement, SQLException, SQLTimeoutException, Types }
 import scala.language.implicitConversions
 
 /**
@@ -173,7 +173,7 @@ sealed trait SqlFragment { self =>
   def execute: ZIO[ZConnection, QueryException, Unit] = {
     def executePs(ps: PreparedStatement): IO[QueryException, Int] =
       ZIO.attempt(ps.executeUpdate()).refineOrDie {
-        case e: SQLTimeoutException => ZTimeoutException(e)
+        case e: SQLTimeoutException => ZSQLTimeoutException(e)
         case e: SQLException => ZSQLException(e)
       }
     ZIO.scoped(for {
@@ -187,7 +187,7 @@ sealed trait SqlFragment { self =>
   /**
    * Executes a SQL delete query.
    */
-  def delete: ZIO[ZConnection, ZSQLException, Long] =
+  def delete: ZIO[ZConnection, QueryException, Long] =
     ZIO.scoped(executeLargeUpdate(self))
 
   /**
@@ -196,13 +196,13 @@ sealed trait SqlFragment { self =>
    * parsed and returned as `Chunk[Long]`. If keys are non-numeric, a
    * `Chunk.empty` is returned.
    */
-  def insert: ZIO[ZConnection, ZSQLException, UpdateResult] =
+  def insert: ZIO[ZConnection, QueryException, UpdateResult] =
     ZIO.scoped(executeWithUpdateResult(self))
 
   /**
    * Performs a SQL update query, returning a count of rows updated.
    */
-  def update: ZIO[ZConnection, ZSQLException, Long] =
+  def update: ZIO[ZConnection, QueryException, Long] =
     ZIO.scoped(executeLargeUpdate(self))
 
   private def executeLargeUpdate(sql: SqlFragment): ZIO[Scope with ZConnection, QueryException, Long] = for {

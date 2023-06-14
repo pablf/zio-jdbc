@@ -18,7 +18,7 @@ package zio.jdbc
 import zio._
 import zio.stream._
 
-import java.sql.SQLException
+import java.sql.{ SQLException, SQLTimeoutException}
 
 final case class Query[+A](decode: ZResultSet => IO[CodecException, A], sql: SqlFragment) {
 
@@ -79,8 +79,8 @@ final case class Query[+A](decode: ZResultSet => IO[CodecException, A], sql: Sql
     zrs        <- connection.executeSqlWith(sql) { ps =>
                     ZIO.acquireRelease {
                       ZIO.attempt(ZResultSet(ps.executeQuery())).refineOrDie {
-                        case e: SQLTimeoutException => ZTimeoutException(e)
-                        case e: SQLException => ZSQLTimeoutException(e)
+                        case e: SQLTimeoutException => ZSQLTimeoutException(e)
+                        case e: SQLException => ZSQLException(e)
                       }
                     }(_.close)
                   }

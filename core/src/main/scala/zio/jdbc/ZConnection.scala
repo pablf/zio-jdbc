@@ -17,7 +17,7 @@ package zio.jdbc
 
 import zio._
 
-import java.sql.{ Connection, PreparedStatement, SQLException, Statement }
+import java.sql.{ Connection, PreparedStatement, SQLException, SQLTimeoutException, Statement }
 
 /**
  * A `ZConnection` is a straightforward wrapper around `java.sql.Connection`. In order
@@ -42,7 +42,7 @@ final class ZConnection(private[jdbc] val underlying: ZConnection.Restorable) ex
 
   private[jdbc] def executeSqlWith[A](
     sql: SqlFragment
-  )(f: PreparedStatement => ZIO[Scope, ZSQLException, A]): ZIO[Scope, ZSQLException, A] =
+  )(f: PreparedStatement => ZIO[Scope, QueryException, A]): ZIO[Scope, QueryException, A] =
     accessZIO { connection =>
       for {
         transactionIsolationLevel <- currentTransactionIsolationLevel.get

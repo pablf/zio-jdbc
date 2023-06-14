@@ -19,8 +19,7 @@ import zio._
 
 import java.io.File
 import java.lang.ClassNotFoundException
-import java.sql.{ Connection, SQLException }
-import java.sql.SQLTimeoutException
+import java.sql.{ Connection, SQLException, SQLTimeoutException }
 
 /**
  * A `ZConnectionPool` represents a pool of connections, and has the ability to
@@ -106,8 +105,8 @@ object ZConnectionPool {
 
                     java.sql.DriverManager.getConnection(url, properties)
                   }.refineOrDie { 
-                    case e: SQLException => DBError(e)
                     case e: SQLTimeoutException => ConnectionTimeout(e)
+                    case e: SQLException => DBError(e)
                   }
         zenv   <- make(acquire).build.provideSome[Scope](ZLayer.succeed(ZConnectionPoolConfig.default))
       } yield zenv.get[ZConnectionPool]

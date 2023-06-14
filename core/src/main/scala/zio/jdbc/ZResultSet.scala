@@ -17,7 +17,7 @@ package zio.jdbc
 
 import zio.{ URIO, _ }
 
-import java.sql.{ ResultSet, SQLException }
+import java.sql.ResultSet
 
 /**
  * A `ZResultSet` is a straightforward wrapper around `java.sql.ResultSet`. In order
