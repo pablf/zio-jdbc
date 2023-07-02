@@ -165,6 +165,8 @@ class TestConnection(failNext: Boolean = false, elems: Int = 0) extends Connecti
 
 class DummyPreparedStatement(failNext: Boolean, elemns: Int) extends PreparedStatement {
 
+  var closed = false
+
   override def unwrap[T <: Object](iface: Class[T]) = ???
 
   override def isWrapperFor(iface: Class[_ <: Object]) = ???
@@ -173,7 +175,7 @@ class DummyPreparedStatement(failNext: Boolean, elemns: Int) extends PreparedSta
 
   override def executeUpdate(sql: String) = ???
 
-  override def close() = ???
+  override def close() = closed = true
 
   override def getMaxFieldSize() = ???
 
@@ -243,7 +245,7 @@ class DummyPreparedStatement(failNext: Boolean, elemns: Int) extends PreparedSta
 
   override def getResultSetHoldability(): Int = ???
 
-  override def isClosed(): Boolean = ???
+  override def isClosed(): Boolean = closed
 
   override def setPoolable(poolable: Boolean): Unit = ???
 
