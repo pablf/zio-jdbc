@@ -112,7 +112,7 @@ object JdbcDecoder extends JdbcDecoderLowPriorityImplicits {
       int =>
         try Some(decoder.unsafeDecode(int, rs)._2)
         catch {
-          case e: Throwable => None
+          case _: Throwable => None
         }
     )
 

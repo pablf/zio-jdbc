@@ -24,17 +24,16 @@ object ZConnectionSpec extends ZIOSpecDefault {
         test("PreparedStatement Automatic Close Fail") {
           ZIO.scoped {
             for {
-              statementClosedTuple <-
-                testConnection
-                  .executeSqlWith(sql"""
+              res <- testConnection
+                .executeSqlWith(sql"""
                 create table users_no_id (
                 name varchar not null,
                 age int not null
                 )""")(ps => ZIO.succeed(new DummyException("Error Ocurred", ps, ps.isClosed())))
-                  .flatMap {
-                    case e: DummyException => ZIO.succeed((e.preparedStatement, e.closedInScope))
-                    case e                 => ZIO.fail(e)
-                  }
+              statementClosedTuple <- res match {
+                case e: DummyException => ZIO.succeed((e.preparedStatement, e.closedInScope))
+                case e                 => ZIO.fail(e)
+              }
             } yield assertTrue(statementClosedTuple._1.isClosed() && !statementClosedTuple._2)
           } //A bit of a hack, DummyException receives the prepared Statement so that its closed State can be checked outside ZConnection's Scope
         }
