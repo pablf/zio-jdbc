@@ -175,7 +175,7 @@ class DummyPreparedStatement(failNext: Boolean, elemns: Int) extends PreparedSta
 
   override def executeUpdate(sql: String) = ???
 
-  override def close() = closed = true
+  override def close(): Unit = closed = true
 
   override def getMaxFieldSize() = ???
 
