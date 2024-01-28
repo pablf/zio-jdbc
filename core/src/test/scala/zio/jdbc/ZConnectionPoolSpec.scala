@@ -65,26 +65,26 @@ object ZConnectionPoolSpec extends ZIOSpecDefault {
      """.execute
   }
 
-  val insertSherlock: ZIO[ZConnectionPool with Any, Throwable, UpdateResult] =
+  val insertSherlock: ZIO[ZConnectionPool with Any, Throwable, UpdateResult[Long]] =
     transaction {
-      sql"insert into users values (default, ${sherlockHolmes.name}, ${sherlockHolmes.age})".insert
+      sql"insert into users values (default, ${sherlockHolmes.name}, ${sherlockHolmes.age})".insertWithKeys
     }
 
-  val insertWatson: ZIO[ZConnectionPool with Any, Throwable, UpdateResult] =
+  val insertWatson: ZIO[ZConnectionPool with Any, Throwable, UpdateResult[Long]] =
     transaction {
-      sql"insert into users values (default, ${johnWatson.name}, ${johnWatson.age})".insert
+      sql"insert into users values (default, ${johnWatson.name}, ${johnWatson.age})".insertWithKeys
     }
 
-  val insertJohn: ZIO[ZConnectionPool with Any, Throwable, UpdateResult] =
+  val insertJohn: ZIO[ZConnectionPool with Any, Throwable, UpdateResult[Long]] =
     transaction {
-      sql"insert into users values (default, ${johnDoe.name}, ${johnDoe.age})".insert
+      sql"insert into users values (default, ${johnDoe.name}, ${johnDoe.age})".insertWithKeys
     }
 
   val insertBatches: ZIO[ZConnectionPool, Throwable, Long] = transaction {
     val users  = genUsers(10000).toSeq
     val mapped = users.map(SqlFragment.insertInto("users_no_id")("name", "age").values(_))
     for {
-      inserted <- ZIO.foreach(mapped)(_.insert)
+      inserted <- ZIO.foreach(mapped)(_.insertWithKeys)
     } yield inserted.map(_.rowsUpdated).sum
   }
 
@@ -92,7 +92,7 @@ object ZConnectionPoolSpec extends ZIOSpecDefault {
     val users           = Seq(user1, user2, user3, user4, user5)
     val insertStatement = SqlFragment.insertInto("users_no_id")("name", "age").values(users)
     for {
-      inserted <- insertStatement.insert
+      inserted <- insertStatement.insertWithKeys
     } yield inserted.rowsUpdated
   }
 
@@ -100,7 +100,7 @@ object ZConnectionPoolSpec extends ZIOSpecDefault {
     val users           = genUsers(3000)
     val insertStatement = SqlFragment.insertInto("users_no_id")("name", "age").values(users)
     for {
-      inserted <- insertStatement.insert
+      inserted <- insertStatement.insertWithKeys
     } yield inserted.rowsUpdated
   }
 
@@ -108,7 +108,7 @@ object ZConnectionPoolSpec extends ZIOSpecDefault {
 
   object User {
     implicit val jdbcDecoder: JdbcDecoder[User] =
-      JdbcDecoder[(String, Int)]().map[User](t => User(t._1, t._2))
+      JdbcDecoder[(String, Int)].map[User](t => User(t._1, t._2))
 
     implicit val jdbcEncoder: JdbcEncoder[User] = (value: User) => {
       val name = value.name
@@ -121,7 +121,7 @@ object ZConnectionPoolSpec extends ZIOSpecDefault {
 
   object UserNoId {
     implicit val jdbcDecoder: JdbcDecoder[UserNoId] =
-      JdbcDecoder[(String, Int)]().map[UserNoId](t => UserNoId(t._1, t._2))
+      JdbcDecoder[(String, Int)].map[UserNoId](t => UserNoId(t._1, t._2))
 
     implicit val jdbcEncoder: JdbcEncoder[UserNoId] = (value: UserNoId) => {
       val name = value.name
@@ -294,21 +294,46 @@ object ZConnectionPoolSpec extends ZIOSpecDefault {
                   assertUsersFound(namesToSearch) &&
                     assertUsersFound(namesToSearch.toList) &&
                     assertUsersFound(namesToSearch.toVector) &&
-                    assertUsersFound(namesToSearch.toSet) &&
-                    assertUsersFound(namesToSearch.toArray)
+                    assertUsersFound(namesToSearch.toSet)
 
                 for {
                   _          <- createUsers *> insertSherlock *> insertWatson *> insertJohn
                   testResult <- asserttions
                 } yield testResult
               } +
+              test("select all multiple in") {
+                val names1        = Vector(sherlockHolmes.name, johnWatson.name)
+                val names2        = Chunk(johnDoe.name)
+                val namesToSearch = Chunk.fromIterable(names1) ++ names2
+
+                for {
+                  _     <- createUsers *> insertSherlock *> insertWatson *> insertJohn
+                  users <- transaction {
+                             sql"select name, age from users where name IN ($names1) OR name in ($names2)"
+                               .query[User]
+                               .selectAll
+                           }
+                } yield assertTrue(users.map(_.name) == namesToSearch)
+              } +
+              test("select all in empty") {
+                val empty = Chunk.empty[String]
+
+                for {
+                  _     <- createUsers *> insertSherlock
+                  users <- transaction {
+                             sql"select name, age from users where name IN ($empty)"
+                               .query[User]
+                               .selectAll
+                           }
+                } yield assertTrue(users.isEmpty)
+              } +
               test("select stream") {
                 for {
-                  _     <- createUsers *> insertSherlock *> insertWatson
+                  _     <- createUsersNoId *> insertFive
                   value <- transaction {
-                             sql"select name, age from users".query[User].selectStream.runCollect
+                             sql"select name, age from users_no_id".query[UserNoId].selectStream(2).chunks.runCollect
                            }
-                } yield assertTrue(value == Chunk(sherlockHolmes, johnWatson))
+                } yield assertTrue(value == Chunk(Chunk(user1, user2), Chunk(user3, user4), Chunk(user5)))
               } +
               test("delete") {
                 for {

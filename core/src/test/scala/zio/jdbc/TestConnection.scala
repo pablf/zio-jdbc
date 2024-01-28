@@ -167,9 +167,9 @@ class DummyPreparedStatement(failNext: Boolean, elemns: Int) extends PreparedSta
 
   var closed = false
 
-  override def unwrap[T <: Object](iface: Class[T]) = ???
+  override def unwrap[T](iface: Class[T]) = ???
 
-  override def isWrapperFor(iface: Class[_ <: Object]) = ???
+  override def isWrapperFor(iface: Class[_]) = ???
 
   override def executeQuery(sql: String) = new DummyResultSet(failNext, elemns)
 
@@ -374,9 +374,9 @@ class DummyResultSet(failNext: Boolean, elems: Int) extends ResultSet {
   var closed      = false
   var currentElem = 0
 
-  override def unwrap[T <: Object](x$1: Class[T]) = ???
+  override def unwrap[T](x$1: Class[T]) = ???
 
-  override def isWrapperFor(x$1: Class[_ <: Object]) = ???
+  override def isWrapperFor(x$1: Class[_]) = ???
 
   override def next(): Boolean =
     if (failNext) {
@@ -612,7 +612,7 @@ class DummyResultSet(failNext: Boolean, elems: Int) extends ResultSet {
 
   override def getStatement() = ???
 
-  override def getObject(columnIndex: Int, map: util.Map[String, Class[_ <: Object]]) = ???
+  override def getObject(columnIndex: Int, map: util.Map[String, Class[_]]) = ???
 
   override def getRef(columnIndex: Int) = ???
 
@@ -622,7 +622,7 @@ class DummyResultSet(failNext: Boolean, elems: Int) extends ResultSet {
 
   override def getArray(columnIndex: Int) = ???
 
-  override def getObject(columnLabel: String, map: util.Map[String, Class[_ <: Object]]) = ???
+  override def getObject(columnLabel: String, map: util.Map[String, Class[_]]) = ???
 
   override def getRef(columnLabel: String) = ???
 
@@ -760,8 +760,8 @@ class DummyResultSet(failNext: Boolean, elems: Int) extends ResultSet {
 
   override def updateNClob(columnLabel: String, reader: Reader) = ???
 
-  override def getObject[T <: Object](columnIndex: Int, `type`: Class[T]) = ???
+  override def getObject[T](columnIndex: Int, `type`: Class[T]) = ???
 
-  override def getObject[T <: Object](columnLabel: String, `type`: Class[T]) = ???
+  override def getObject[T](columnLabel: String, `type`: Class[T]) = ???
 
 }

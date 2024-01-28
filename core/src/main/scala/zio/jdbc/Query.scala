@@ -55,19 +55,27 @@ final case class Query[+A](decode: ZResultSet => IO[CodecException, A], sql: Sql
   /**
    * Performs a SQL select query, returning a stream of results.
    */
-  def selectStream: ZStream[ZConnection, QueryException, A] =
+  def selectStream(chunkSize: => Int = ZStream.DefaultChunkSize): ZStream[ZConnection, QueryException, A] =
     ZStream.unwrapScoped {
       for {
         zrs   <- executeQuery(sql)
-        stream = ZStream.repeatZIOOption {
-                   ZIO
-                     .suspendSucceed(if (zrs.next()) decode(zrs).map(Some(_)) else ZIO.none)
-                     .mapError(Some(_))
-                     .flatMap {
-                       case None    => ZIO.fail(None)
-                       case Some(v) => ZIO.succeed(v)
+        stream = ZStream.paginateChunkZIO(())(_ =>
+                   ZIO.attemptBlocking {
+                     val builder = ChunkBuilder.make[A](chunkSize)
+                     var hasNext = false
+                     var i       = 0
+                     while (
+                       i < chunkSize && {
+                         hasNext = zrs.next()
+                         hasNext
+                       }
+                     ) {
+                       builder.addOne(decode(zrs))
+                       i += 1
                      }
-                 }
+                     (builder.result(), if (hasNext) Some(()) else None)
+                   }
+                 )
       } yield stream
     }
 
@@ -76,7 +84,7 @@ final case class Query[+A](decode: ZResultSet => IO[CodecException, A], sql: Sql
 
   private[jdbc] def executeQuery(sql: SqlFragment): ZIO[Scope with ZConnection, QueryException, ZResultSet] = for {
     connection <- ZIO.service[ZConnection]
-    zrs        <- connection.executeSqlWith(sql) { ps =>
+    zrs        <- connection.executeSqlWith(sql, false) { ps =>
                     ZIO.acquireRelease {
                       ZIO.attempt(ZResultSet(ps.executeQuery())).refineOrDie {
                         case e: SQLTimeoutException => ZSQLTimeoutException(e)

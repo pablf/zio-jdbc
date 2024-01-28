@@ -19,6 +19,7 @@ import zio._
 import zio.jdbc.SqlFragment.Segment
 
 import java.sql.{ PreparedStatement, SQLException, SQLTimeoutException, Types }
+import java.time.{ OffsetDateTime, ZoneOffset }
 import scala.language.implicitConversions
 
 /**
@@ -112,27 +113,28 @@ sealed trait SqlFragment { self =>
     foreachSegment { syntax =>
       sql.append(syntax.value)
     } { param =>
+      var size = 0
       param.value match {
         case iterable: Iterable[_] =>
-          iterable.iterator.foreach { item =>
+          iterable.foreach { item =>
             paramsBuilder += item.toString
+            size += 1
           }
-          sql.append(
-            Seq.fill(iterable.iterator.size)("?").mkString(",")
-          )
 
         case array: Array[_] =>
           array.foreach { item =>
             paramsBuilder += item.toString
+            size += 1
           }
-          sql.append(
-            Seq.fill(array.length)("?").mkString(",")
-          )
 
         case _ =>
-          sql.append("?")
           paramsBuilder += param.value.toString
+          size += 1
       }
+      sql.append(
+        if (size == 1) "?"
+        else Seq.fill(size)("?").mkString(",")
+      )
     }
 
     val params       = paramsBuilder.result()
@@ -174,7 +176,7 @@ sealed trait SqlFragment { self =>
     ZIO
       .scoped(for {
         connection <- ZIO.service[ZConnection]
-        _          <- connection.executeSqlWith(self) { ps =>
+        _          <- connection.executeSqlWith(self, false) { ps =>
                         ZIO.attempt(ps.executeUpdate()).refineOrDie {
                           case e: SQLTimeoutException => ZSQLTimeoutException(e)
                           case e: SQLException        => ZSQLException(e)
@@ -189,13 +191,40 @@ sealed trait SqlFragment { self =>
     ZIO.scoped(executeLargeUpdate(self))
 
   /**
+   * Executes a SQL delete query with a RETURNING clause, materialized
+   * as values of type `A`.
+   */
+  def deleteReturning[A: JdbcDecoder]: ZIO[ZConnection, Throwable, UpdateResult[A]] =
+    ZIO.scoped(executeWithReturning(self, JdbcDecoder[A]))
+
+  /**
+   * Performs an SQL insert query, returning a count of rows inserted.
+   */
+  def insert: ZIO[ZConnection, Throwable, Long] =
+    ZIO.scoped(executeUpdate(self, false).map(_._1))
+
+  /**
+   * Executes a SQL insert query with a RETURNING clause, materialized
+   * as values of type `A`.
+   */
+  def insertReturning[A: JdbcDecoder]: ZIO[ZConnection, Throwable, UpdateResult[A]] =
+    ZIO.scoped(executeWithReturning(self, JdbcDecoder[A]))
+
+  /**
    * Performs an SQL insert query, returning a count of rows inserted and a
    * [[zio.Chunk]] of auto-generated keys. By default, auto-generated keys are
    * parsed and returned as `Chunk[Long]`. If keys are non-numeric, a
    * `Chunk.empty` is returned.
    */
-  def insert: ZIO[ZConnection, QueryException, UpdateResult] =
-    ZIO.scoped(executeWithUpdateResult(self))
+  def insertWithKeys: ZIO[ZConnection, QueryException, UpdateResult[Long]] =
+    ZIO.scoped(executeWithReturning(self, JdbcDecoder[Long]))
+
+  /**
+   * Executes a SQL update query with a RETURNING clause, materialized
+   * as values of type `A`.
+   */
+  def updateReturning[A: JdbcDecoder]: ZIO[ZConnection, QueryException, UpdateResult[A]] =
+    ZIO.scoped(executeWithReturning(self, JdbcDecoder[A]))
 
   /**
    * Performs a SQL update query, returning a count of rows updated.
@@ -205,7 +234,7 @@ sealed trait SqlFragment { self =>
 
   private def executeLargeUpdate(sql: SqlFragment): ZIO[Scope with ZConnection, QueryException, Long] = for {
     connection <- ZIO.service[ZConnection]
-    count      <- connection.executeSqlWith(sql) { ps =>
+    count      <- connection.executeSqlWith(sql, false) { ps =>
                     ZIO.attempt(ps.executeLargeUpdate()).refineOrDie {
                       case e: SQLTimeoutException => ZSQLTimeoutException(e)
                       case e: SQLException        => ZSQLException(e)
@@ -213,27 +242,36 @@ sealed trait SqlFragment { self =>
                   }
   } yield count
 
-  private def executeWithUpdateResult(sql: SqlFragment): ZIO[Scope with ZConnection, QueryException, UpdateResult] =
+  private def executeWithReturning[A](
+    sql: SqlFragment,
+    decoder: JdbcDecoder[A]
+  ): ZIO[Scope with ZConnection, QueryException, UpdateResult[A]] =
     for {
-      updateRes  <- executeUpdate(sql)
-      (count, rs) = updateRes
-      keys       <- ZIO.attempt {
-                      val builder = ChunkBuilder.make[Long]()
-                      while (rs.next())
-                        builder += rs.resultSet.getLong(1)
-                      builder.result()
-                    }.orElseSucceed(Chunk.empty)
+      updateRes       <- executeUpdate(sql, true)
+      (count, maybeRs) = updateRes
+      keys            <- maybeRs match {
+                           case None     => ZIO.succeed(Chunk.empty)
+                           case Some(rs) =>
+                             ZIO.attempt {
+                               val builder = ChunkBuilder.make[A]()
+                               while (rs.next())
+                                 builder += decoder.unsafeDecode(1, rs.resultSet)._2
+                               builder.result()
+                             }
+                         }
     } yield UpdateResult(count, keys)
 
-  private[jdbc] def executeUpdate(sql: SqlFragment): ZIO[Scope with ZConnection, QueryException, (Long, ZResultSet)] =
+  private[jdbc] def executeUpdate(
+    sql: SqlFragment,
+    returnAutoGeneratedKeys: Boolean
+  ): ZIO[Scope with ZConnection, QueryException, (Long, Option[ZResultSet])] =
     for {
       connection <- ZIO.service[ZConnection]
-      result     <- connection.executeSqlWith(sql) { ps =>
-                      ZIO
-                        .acquireRelease(ZIO.attempt {
-                          val rowsUpdated = ps.executeLargeUpdate()
-                          val updatedKeys = ps.getGeneratedKeys
-                          (rowsUpdated, ZResultSet(updatedKeys))
+      result     <- connection.executeSqlWith(sql, returnAutoGeneratedKeys) { ps =>
+                      ZIO.acquireRelease(ZIO.attempt {
+                        val rowsUpdated = ps.executeLargeUpdate()
+                        val updatedKeys = if (returnAutoGeneratedKeys) Some(ps.getGeneratedKeys) else None
+                        (rowsUpdated, updatedKeys.map(ZResultSet(_)))
 
                         })(_._2.close)
                         .refineOrDie {
@@ -245,6 +283,7 @@ sealed trait SqlFragment { self =>
 
   private[jdbc] def foreachSegment(addSyntax: Segment.Syntax => Any)(addParam: Segment.Param => Any): Unit =
     segments.foreach {
+      case Segment.Empty          => ()
       case syntax: Segment.Syntax => addSyntax(syntax)
       case param: Segment.Param   => addParam(param)
       case nested: Segment.Nested => nested.sql.foreachSegment(addSyntax)(addParam)
@@ -259,11 +298,30 @@ object SqlFragment {
   def fromFunction(f: ChunkBuilder[Segment] => Unit): SqlFragment =
     SqlFragment.FromFunction(f)
 
+  implicit final class FragmentOps[I[t] <: Iterable[t]](private val fragments: I[SqlFragment]) extends AnyVal {
+    def mkFragment(sep: SqlFragment): SqlFragment =
+      intersperse(sep, fragments)
+
+    def mkFragment(start: SqlFragment, sep: SqlFragment, end: SqlFragment): SqlFragment =
+      start ++ fragments.mkFragment(sep) ++ end
+  }
+
+  implicit final class NonEmptyChunkOps(private val fragments: NonEmptyChunk[SqlFragment]) extends AnyVal {
+    def mkFragment(sep: SqlFragment): SqlFragment =
+      fragments.toChunk.mkFragment(sep)
+
+    def mkFragment(start: SqlFragment, sep: SqlFragment, end: SqlFragment): SqlFragment =
+      fragments.toChunk.mkFragment(start, sep, end)
+  }
+
   sealed trait Segment
   object Segment {
+    case object Empty                                       extends Segment
     final case class Syntax(value: String)                  extends Segment
     final case class Param(value: Any, setter: Setter[Any]) extends Segment
     final case class Nested(sql: SqlFragment)               extends Segment
+
+    @inline def empty: Segment = Empty
 
     implicit def paramSegment[A](a: A)(implicit setter: Setter[A]): Segment.Param =
       Segment.Param(a, setter.asInstanceOf[Setter[Any]])
@@ -280,7 +338,7 @@ object SqlFragment {
   }
 
   object Setter {
-    def apply[A]()(implicit setter: Setter[A]): Setter[A] = setter
+    def apply[A](implicit setter: Setter[A]): Setter[A] = setter
 
     def apply[A](onValue: (PreparedStatement, Int, A) => Unit, onNull: (PreparedStatement, Int) => Unit): Setter[A] =
       new Setter[A] {
@@ -318,22 +376,11 @@ object SqlFragment {
     implicit val byteSetter: Setter[Byte]             = forSqlType((ps, i, value) => ps.setByte(i, value), Types.TINYINT)
     implicit val byteArraySetter: Setter[Array[Byte]] = forSqlType((ps, i, value) => ps.setBytes(i, value), Types.ARRAY)
     implicit val blobSetter: Setter[java.sql.Blob]    = forSqlType((ps, i, value) => ps.setBlob(i, value), Types.BLOB)
-    implicit val sqlDateSetter: Setter[java.sql.Date] = forSqlType((ps, i, value) => ps.setDate(i, value), Types.DATE)
-    implicit val sqlTimeSetter: Setter[java.sql.Time] = forSqlType((ps, i, value) => ps.setTime(i, value), Types.TIME)
 
     implicit def chunkSetter[A](implicit setter: Setter[A]): Setter[Chunk[A]]   = iterableSetter[A, Chunk[A]]
     implicit def listSetter[A](implicit setter: Setter[A]): Setter[List[A]]     = iterableSetter[A, List[A]]
     implicit def vectorSetter[A](implicit setter: Setter[A]): Setter[Vector[A]] = iterableSetter[A, Vector[A]]
     implicit def setSetter[A](implicit setter: Setter[A]): Setter[Set[A]]       = iterableSetter[A, Set[A]]
-
-    implicit def arraySetter[A](implicit setter: Setter[A]): Setter[Array[A]] =
-      forSqlType(
-        (ps, i, iterable) =>
-          iterable.zipWithIndex.foreach { case (value, valueIdx) =>
-            setter.setValue(ps, i + valueIdx, value)
-          },
-        Types.OTHER
-      )
 
     private def iterableSetter[A, I <: Iterable[A]](implicit setter: Setter[A]): Setter[I] =
       forSqlType(
@@ -346,8 +393,6 @@ object SqlFragment {
 
     implicit val bigDecimalSetter: Setter[java.math.BigDecimal] =
       forSqlType((ps, i, value) => ps.setBigDecimal(i, value), Types.NUMERIC)
-    implicit val sqlTimestampSetter: Setter[java.sql.Timestamp] =
-      forSqlType((ps, i, value) => ps.setTimestamp(i, value), Types.TIMESTAMP)
 
     implicit val uuidParamSetter: Setter[java.util.UUID] = other((ps, i, value) => ps.setObject(i, value), "uuid")
 
@@ -355,10 +400,43 @@ object SqlFragment {
     implicit val bigIntSetter: Setter[java.math.BigInteger]           = bigDecimalSetter.contramap(new java.math.BigDecimal(_))
     implicit val bigDecimalScalaSetter: Setter[scala.math.BigDecimal] = bigDecimalSetter.contramap(_.bigDecimal)
     implicit val byteChunkSetter: Setter[Chunk[Byte]]                 = byteArraySetter.contramap(_.toArray)
-    implicit val instantSetter: Setter[java.time.Instant]             = sqlTimestampSetter.contramap(java.sql.Timestamp.from)
+
+    // These `java.time.*` are inspired from Quill encoders. See `ObjectGenericTimeEncoders` in Quill.
+    // Notes:
+    //   1. These setters probably don't work for SQLite. Quill as a separate trait, named `BasicTimeDecoders` which seems dedicated to SQLite.
+    //   2. We deliberately decided not to support `java.time.OffsetTime`.
+    //      Because:
+    //        - See https://github.com/h2database/h2database/issues/521#issuecomment-333517705
+    //        - It's supposed to be mapped to `java.sql.Types.TIME_WITH_TIMEZONE` but this type isn't supported by the PG JDBC driver.
+    //          See: https://github.com/pgjdbc/pgjdbc/blob/9cf9f36a1d3a1edd9286721f9c0b9cfa9e8422e3/pgjdbc/src/main/java/org/postgresql/jdbc/PgPreparedStatement.java#L557-L741
+    //      Note that Quill made a different choice. For PG, it uses `java.sql.Types.TIME` but as we don't support yet differences between DBs and `OffsetTime` is almost never used
+    //      it's simpler, for now, to not support it and to document this choice.
+    //      If you need it, please open an issue or a PR explaining your use case.
+    implicit val sqlDateSetter: Setter[java.sql.Date]                   = forSqlType((ps, i, value) => ps.setDate(i, value), Types.DATE)
+    implicit val sqlTimeSetter: Setter[java.sql.Time]                   = forSqlType((ps, i, value) => ps.setTime(i, value), Types.TIME)
+    implicit val sqlTimestampSetter: Setter[java.sql.Timestamp]         =
+      forSqlType((ps, i, value) => ps.setTimestamp(i, value), Types.TIMESTAMP)
+    implicit val localDateSetter: Setter[java.time.LocalDate]           =
+      sqlDateSetter.contramap(java.sql.Date.valueOf)
+    implicit val localTimeSetter: Setter[java.time.LocalTime]           =
+      sqlTimeSetter.contramap(java.sql.Time.valueOf)
+    implicit val localDateTimeSetter: Setter[java.time.LocalDateTime]   =
+      sqlTimestampSetter.contramap(java.sql.Timestamp.valueOf)
+    implicit val zonedDateTimeSetter: Setter[java.time.ZonedDateTime]   =
+      forSqlType(
+        (ps, i, value) => ps.setObject(i, value.toOffsetDateTime, Types.TIMESTAMP_WITH_TIMEZONE),
+        Types.TIMESTAMP_WITH_TIMEZONE
+      )
+    implicit val instantSetter: Setter[java.time.Instant]               =
+      forSqlType(
+        (ps, i, value) => ps.setObject(i, OffsetDateTime.ofInstant(value, ZoneOffset.UTC)),
+        Types.TIMESTAMP_WITH_TIMEZONE
+      )
+    implicit val offsetDateTimeSetter: Setter[java.time.OffsetDateTime] =
+      forSqlType((ps, i, value) => ps.setObject(i, value, Types.TIMESTAMP_WITH_TIMEZONE), Types.TIMESTAMP_WITH_TIMEZONE)
   }
 
-  def apply(sql: String): SqlFragment = sql
+  def apply(sql: String): SqlFragment = SqlFragment(Chunk.single(SqlFragment.Segment.Syntax(sql)))
 
   def apply(segments: Chunk[Segment]): SqlFragment =
     SqlFragment.Append(segments)
@@ -375,10 +453,7 @@ object SqlFragment {
   def update(table: String): SqlFragment =
     s"UPDATE $table"
 
-  private[jdbc] def intersperse(
-    sep: SqlFragment,
-    elements: Iterable[SqlFragment]
-  ): SqlFragment = {
+  def intersperse(sep: SqlFragment, elements: Iterable[SqlFragment]): SqlFragment = {
     var first = true
     elements.foldLeft(empty) { (acc, element) =>
       if (!first) acc ++ sep ++ element

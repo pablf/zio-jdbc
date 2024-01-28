@@ -28,10 +28,15 @@ object SqlFragmentSpec extends ZIOSpecDefault {
               s"Sql(select name, age from users where id = ?, $id)"
           )
         } +
-        test("ensure no empty Syntax instances") {
+        test("Empty Segment instances are insignificant") {
           val age  = 42
           val name = "sholmes"
-          assertTrue(sql"select name, age from users where age = $age and name = $name".segments.size == 4)
+          val sql  = sql"select name, age from users where age = $age and name = $name"
+          assertTrue(
+            sql.segments.size == 5,
+            sql.segments.last == SqlFragment.Segment.Empty,
+            sql.toString == "Sql(select name, age from users where age = ? and name = ?, 42, sholmes)"
+          )
         } +
         test("interpolate Sql values") {
           val tableName    = sql"table1"
@@ -45,7 +50,7 @@ object SqlFragmentSpec extends ZIOSpecDefault {
         } +
         test("type safe interpolation") {
           final case class Foo(value: String)
-          implicit val fooParamSetter: SqlFragment.Setter[Foo] = SqlFragment.Setter[String]().contramap(_.toString)
+          implicit val fooParamSetter: SqlFragment.Setter[Foo] = SqlFragment.Setter[String].contramap(_.toString)
 
           val testSql = sql"${Foo("test")}"
 
@@ -152,8 +157,22 @@ object SqlFragmentSpec extends ZIOSpecDefault {
                 assertIn(Chunk(1, 2, 3)) &&
                 assertIn(List(1, 2, 3)) &&
                 assertIn(Vector(1, 2, 3)) &&
-                assertIn(Set(1, 2, 3)) &&
-                assertIn(Array(1, 2, 3))
+                assertIn(Set(1, 2, 3))
+              } + test("interpolation params are supported multiple collections") {
+                val chunk  = Chunk(1, 2, 3)
+                val list   = List(4, 5)
+                val vector = Vector(6)
+                val set    = Set(7, 8, 9)
+                assertTrue(
+                  sql"select name, age from users where (1 = 0 or id in ($chunk) or id in ($list) or id in ($vector) or id in ($set))".toString ==
+                    "Sql(select name, age from users where (1 = 0 or id in (?,?,?) or id in (?,?) or id in (?) or id in (?,?,?)), 1, 2, 3, 4, 5, 6, 7, 8, 9)"
+                )
+              } + test("interpolation param is supported empty collections") {
+                val empty = Chunk.empty[Int]
+                assertTrue(
+                  sql"select name, age from users where id in ($empty)".toString ==
+                    "Sql(select name, age from users where id in ())"
+                )
               }
             } +
             test("not in") {
@@ -246,6 +265,15 @@ object SqlFragmentSpec extends ZIOSpecDefault {
           assertTrue(
             result.toString == "Sql(UPDATE persons)"
           )
+        } +
+        test("'interpolation <=> ++ operator' equivalence") {
+          val s1 = sql"${"1"}::varchar"
+          val s2 = (sql"${"1"}" ++ sql"::varchar")
+
+          assertTrue(
+            s1.toString == "Sql(?::varchar, 1)",
+            s1.toString == s2.toString
+          )
         }
     } +
       suite("SqlFragment ResultSet tests") {
@@ -264,16 +292,16 @@ object SqlFragmentSpec extends ZIOSpecDefault {
               for {
                 rsClosedTuple <- ZIO.scoped {
                                    for {
-                                     rs     <- testSql.executeUpdate(testSql)
-                                     closed <- rs._2.access(_.isClosed())
+                                     rs     <- testSql.executeUpdate(testSql, true)
+                                     closed <- rs._2.get.access(_.isClosed())
                                      count   = {
                                        var c = 0
-                                       while (rs._2.next()) c += 1
+                                       while (rs._2.get.next()) c += 1
                                        c
                                      }
                                    } yield (rs._2, closed, count)
                                  }
-                closed        <- rsClosedTuple._1.access(_.isClosed())
+                closed        <- rsClosedTuple._1.get.access(_.isClosed())
               } yield assertTrue(closed && !rsClosedTuple._2 && rsClosedTuple._3 == elements)
             }.provide(ZLayer.succeed(testConnection(false, elements)))
           } +
@@ -283,15 +311,15 @@ object SqlFragmentSpec extends ZIOSpecDefault {
                 for {
                   rsClosedTuple <- ZIO.scoped {
                                      for {
-                                       rs     <- testSql.executeUpdate(testSql)
-                                       closed <- rs._2.access(_.isClosed())
+                                       rs     <- testSql.executeUpdate(testSql, true)
+                                       closed <- rs._2.get.access(_.isClosed())
                                        failed <- ZIO.attempt {
-                                                   rs._2.next()
+                                                   rs._2.get.next()
                                                    false
                                                  }.orElseSucceed(true)
                                      } yield (rs._2, closed, failed)
                                    }
-                  closed        <- rsClosedTuple._1.access(_.isClosed())
+                  closed        <- rsClosedTuple._1.get.access(_.isClosed())
                 } yield assertTrue(closed && !rsClosedTuple._2, rsClosedTuple._3)
               }.provide(ZLayer.succeed(testConnection(failNext = true, elems = elements)))
             }
@@ -319,7 +347,7 @@ object SqlFragmentSpec extends ZIOSpecDefault {
 
               object UserNoId {
                 implicit val jdbcDecoder: JdbcDecoder[UserNoId] =
-                  JdbcDecoder[(String, Int)]().map[UserNoId](t => UserNoId(t._1, t._2))
+                  JdbcDecoder[(String, Int)].map[UserNoId](t => UserNoId(t._1, t._2))
 
                 implicit val jdbcEncoder: JdbcEncoder[UserNoId] = (value: UserNoId) => {
                   val name = value.name
@@ -341,7 +369,7 @@ object SqlFragmentSpec extends ZIOSpecDefault {
                 val insertStatement = SqlFragment.insertInto("users_resultset")("name", "age").values(users)
                 for {
                   inserted <- insertStatement.insert
-                } yield inserted.rowsUpdated
+                } yield inserted
               }
 
               ZIO.scoped {
@@ -351,16 +379,16 @@ object SqlFragmentSpec extends ZIOSpecDefault {
                   _             <- insertEverything(elements)
                   rsClosedTuple <- ZIO.scoped {
                                      for {
-                                       rs     <- testSql.executeUpdate(testSql)
-                                       closed <- rs._2.access(_.isClosed())
+                                       rs     <- testSql.executeUpdate(testSql, true)
+                                       closed <- rs._2.get.access(_.isClosed())
                                        count   = {
                                          var c = 0
-                                         while (rs._2.next()) c += 1
+                                         while (rs._2.get.next()) c += 1
                                          c
                                        }
                                      } yield (rs._2, closed, count, rs._1)
                                    }
-                  closed        <- rsClosedTuple._1.access(_.isClosed())
+                  closed        <- rsClosedTuple._1.get.access(_.isClosed())
                 } yield assertTrue(
                   closed && !rsClosedTuple._2 && rsClosedTuple._3 == elements && rsClosedTuple._4 == elements.toLong
                 ) //Assert ResultSet is closed Outside scope but was open inside scope
