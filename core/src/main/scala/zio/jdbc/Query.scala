@@ -60,17 +60,18 @@ final case class Query[+A](decode: ZResultSet => IO[CodecException, A], sql: Sql
       for {
         zrs   <- executeQuery(sql)
         stream = ZStream.paginateChunkZIO(())(_ =>
-          ZIO.iterate((ChunkBuilder.make[A](chunkSize), 0)) {
-            case (_, i) => i < chunkSize && zrs.next()
-          }{
-            case (builder, i) => 
-              for {
-                decoded <- decode(zrs)
-              } yield (builder += decoded, i + 1)
-          }.map { case (builder, i) =>
-            (builder.result(), if (i >= chunkSize) Some(()) else None)
-          }
-        )
+                   ZIO
+                     .iterate((ChunkBuilder.make[A](chunkSize), 0)) { case (_, i) =>
+                       i < chunkSize && zrs.next()
+                     } { case (builder, i) =>
+                       for {
+                         decoded <- decode(zrs)
+                       } yield (builder += decoded, i + 1)
+                     }
+                     .map { case (builder, i) =>
+                       (builder.result(), if (i >= chunkSize) Some(()) else None)
+                     }
+                 )
       } yield stream
     }
 
