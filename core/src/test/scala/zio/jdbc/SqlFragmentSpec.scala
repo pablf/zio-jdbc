@@ -437,6 +437,7 @@ object Models {
     )
 
   import zio.schema.Factory._
+  import zio.schema.Factory
   import zio.schema.Factory.factory
 
   implicit val p: zio.schema.Factory[UserLogin] = zio.schema.Factory.factory[UserLogin]
