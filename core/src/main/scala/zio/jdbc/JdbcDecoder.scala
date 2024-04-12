@@ -106,7 +106,7 @@ object JdbcDecoder extends JdbcDecoderLowPriorityImplicits {
                         }
                     }
                     Unsafe.unsafe { implicit unsafe =>
-                        record.construct(Chunk.fromIterable(fieldsDecoded)).getOrElse(throw new Throwable(s"It was not possible to decode using Schema.Record[${record.id}]"))
+                        record.construct(Chunk.fromIterable(fieldsDecoded.reverse)).getOrElse(throw new Throwable(s"It was not possible to decode using Schema.Record[${record.id}]"))
                     }
                 }
             )
