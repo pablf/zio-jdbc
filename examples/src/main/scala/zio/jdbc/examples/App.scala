@@ -60,6 +60,12 @@ final case class User(name: String, age: Int)
 object User {
   import Schema.Field
 
+  object Factories {
+    import zio.schema._
+    import zio.schema.Factory._
+    implicit val userFactory: Factory[User] = factory
+  }
+
   implicit val schema: Schema[User] =
     Schema.CaseClass2[String, Int, User](
       TypeId.parse(classOf[User].getName),
@@ -69,6 +75,7 @@ object User {
     )
 
   // One can derive a jdbc codec from a zio-schema or
+  import Factories._
   implicit val jdbcDecoder: JdbcDecoder[User] = JdbcDecoder.fromSchema
   implicit val jdbcEncoder: JdbcEncoder[User] = JdbcEncoder.fromSchema
 

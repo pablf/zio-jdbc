@@ -710,7 +710,10 @@ trait JdbcEncoder0LowPriorityImplicits { self =>
 
   import zio.schema.Factory
 
-  def fromSchema[A: Factory](implicit schema: Schema[A]): JdbcEncoder[A] =
-    implicitly[Factory[A]].derive[JdbcEncoder](JdbcEncoder.deriver)
+  def fromSchema[A](implicit factory: Factory[A], schema: Schema[A]): JdbcEncoder[A] =
+    factory.derive[JdbcEncoder](JdbcEncoder.deriver)
+
+  def fromSchema[A: Factory](schema: Schema[A]): JdbcEncoder[A] =
+    fromSchema(implicitly[Factory[A]], schema)
 
 }
