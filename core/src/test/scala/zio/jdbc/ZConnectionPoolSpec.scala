@@ -3,6 +3,7 @@ package zio.jdbc
 import zio._
 import zio.jdbc.SqlFragment.Setter
 import zio.schema._
+import zio.schema.Factory._
 import zio.test.Assertion._
 import zio.test.TestAspect._
 import zio.test._

@@ -872,8 +872,6 @@ trait JdbcDecoderLowPriorityImplicits {
     if (value != null) dyn else DynamicValue.NoneValue
 
   import zio.schema.Factory
-  import zio.schema.Factory.factory
-  import scala.reflect.ClassTag
 
   def fromSchemaAndDeriver[A](implicit f: Factory[A], schema: Schema[A], deriver: zio.schema.Deriver[JdbcDecoder]): JdbcDecoder[A] =
     f.derive[JdbcDecoder](deriver)
@@ -881,6 +879,7 @@ trait JdbcDecoderLowPriorityImplicits {
   def fromSchema[A](implicit f: Factory[A], schema: Schema[A]): JdbcDecoder[A] =
     fromSchemaAndDeriver(f, schema, JdbcDecoder.deriver)
 
-  def fromSchema[A <: Product : ClassTag](schema: Schema[A]): JdbcDecoder[A] =
-    fromSchema(factory[A], schema)
+  def fromSchema[A: Factory](schema: Schema[A]): JdbcDecoder[A] =
+    fromSchema(implicitly[Factory[A]], schema)
+
 }

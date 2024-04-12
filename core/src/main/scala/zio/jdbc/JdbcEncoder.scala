@@ -36,7 +36,7 @@ object JdbcEncoder extends JdbcEncoder0LowPriorityImplicits {
         def deriveRecord[A](record: Schema.Record[A], fields: => Chunk[WrappedF[JdbcEncoder, _]], summoned: => Option[JdbcEncoder[A]]): JdbcEncoder[A] =
             Unsafe.unsafe { implicit unsafe =>
                 value => record.deconstruct(value).zip(fields).map {
-                    case (field, encoder) => encoder.unwrap.asInstanceOf[JdbcEncoder[Any]].encode(field)
+                    case (Some(field), encoder) => encoder.unwrap.asInstanceOf[JdbcEncoder[Any]].encode(field)
                 }.reduce(_ ++ SqlFragment.comma ++ _)
             }
 
@@ -708,7 +708,6 @@ object JdbcEncoder extends JdbcEncoder0LowPriorityImplicits {
 trait JdbcEncoder0LowPriorityImplicits { self =>
 
   import zio.schema.Factory
-  import zio.schema.Factory._
 
   def fromSchema[A: Factory](implicit schema: Schema[A]): JdbcEncoder[A] =
     implicitly[Factory[A]].derive[JdbcEncoder](JdbcEncoder.deriver)
