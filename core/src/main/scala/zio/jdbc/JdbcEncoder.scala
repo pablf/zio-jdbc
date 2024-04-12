@@ -16,7 +16,7 @@
 package zio.jdbc
 
 import zio.{Chunk, Unsafe}
-import zio.schema.{ Derive, Schema, StandardType }
+import zio.schema.{ Schema, StandardType }
 import zio.schema.Deriver._
 
 /**
@@ -37,6 +37,7 @@ object JdbcEncoder extends JdbcEncoder0LowPriorityImplicits {
             Unsafe.unsafe { implicit unsafe =>
                 value => record.deconstruct(value).zip(fields).map {
                     case (Some(field), encoder) => encoder.unwrap.asInstanceOf[JdbcEncoder[Any]].encode(field)
+                    case (None, _) =>  throw JdbcEncoderError(s"Failed to encode schema ${record}", new IllegalArgumentException)
                 }.reduce(_ ++ SqlFragment.comma ++ _)
             }
 
