@@ -436,7 +436,7 @@ object Models {
       Transfer.apply
     )
 
-  import zio.schema.{ Deriver, Factory}
+  import zio.schema.{ Deriver, Factory, Derive}
   import zio.schema.Factory.factory
 
   implicit val p: zio.schema.Factory[UserLogin] = zio.schema.Factory.factory[UserLogin]
