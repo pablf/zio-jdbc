@@ -400,7 +400,7 @@ object SqlFragmentSpec extends ZIOSpecDefault {
 }
 
 object Models {
-  import zio.schema.Factory._
+  import zio.schema.Factory.factory
   import Schema.Field
 
   implicit val personSchema: Schema[Person] =
