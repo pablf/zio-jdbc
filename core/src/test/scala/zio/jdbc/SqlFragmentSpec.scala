@@ -400,6 +400,12 @@ object SqlFragmentSpec extends ZIOSpecDefault {
 }
 
 object Models {
+
+  import zio.schema.{ Deriver, Factory, Derive}
+  import zio.schema.Factory.factory
+
+  implicit val p: zio.schema.Factory[UserLogin] = zio.schema.Factory.factory[UserLogin]
+
   import Schema.Field
 
   implicit val personSchema: Schema[Person] =
@@ -436,10 +442,7 @@ object Models {
       Transfer.apply
     )
 
-  import zio.schema.{ Deriver, Factory, Derive}
-  import zio.schema.Factory.factory
-
-  implicit val p: zio.schema.Factory[UserLogin] = zio.schema.Factory.factory[UserLogin]
+  
 
   implicit val personEncoder: JdbcEncoder[Person]         = JdbcEncoder.fromSchema[Person](zio.schema.Factory.factory, personSchema)
   implicit val userLoginEncoder: JdbcEncoder[UserLogin]   = JdbcEncoder.fromSchema[UserLogin]
