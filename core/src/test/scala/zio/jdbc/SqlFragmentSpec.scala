@@ -441,7 +441,7 @@ object Models {
 
   implicit val p: zio.schema.Factory[UserLogin] = zio.schema.Factory.factory[UserLogin]
 
-  implicit val personEncoder: JdbcEncoder[Person]         = JdbcEncoder.fromSchema[Person](zio.schema.Factory.factory, implicitly[Schema[Person]])
+  implicit val personEncoder: JdbcEncoder[Person]         = JdbcEncoder.fromSchema[Person](zio.schema.Factory.factory, personSchema)
   implicit val userLoginEncoder: JdbcEncoder[UserLogin]   = JdbcEncoder.fromSchema[UserLogin]
   implicit val activeUserEncoder: JdbcEncoder[ActiveUser] = JdbcEncoder.fromSchema[ActiveUser]
   implicit val transactionEncoder: JdbcEncoder[Transfer]  = JdbcEncoder.fromSchema[Transfer]
