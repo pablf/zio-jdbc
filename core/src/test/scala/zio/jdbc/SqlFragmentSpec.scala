@@ -400,7 +400,6 @@ object SqlFragmentSpec extends ZIOSpecDefault {
 }
 
 object Models {
-  import zio.schema.Factory.factory
   import Schema.Field
 
   implicit val personSchema: Schema[Person] =
@@ -436,6 +435,9 @@ object Models {
       Field("location", Schema[Option[String]], get0 = _.location, set0 = (x, v) => x.copy(location = v)),
       Transfer.apply
     )
+
+  import zio.schema.Factory._
+  import zio.schema.Factory.factory
 
   implicit val p: zio.schema.Factory[UserLogin] = zio.schema.Factory.factory[UserLogin]
 
