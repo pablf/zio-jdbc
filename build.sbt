@@ -2,7 +2,7 @@ import BuildHelper._
 
 val ZioVersion       = "2.0.20"
 val H2Version        = "2.2.224"
-val ZioSchemaVersion = "0.4.16"
+val ZioSchemaVersion = "1.1.0"
 
 name := "zio-jdbc"
 
@@ -43,8 +43,10 @@ lazy val core = project
       "dev.zio"       %% "zio"          % ZioVersion,
       "dev.zio"       %% "zio-streams"  % ZioVersion,
       "dev.zio"       %% "zio-schema"   % ZioSchemaVersion,
+      "dev.zio"       %% "zio-schema-derivation"   % ZioSchemaVersion,
       "dev.zio"       %% "zio-test"     % ZioVersion % Test,
       "dev.zio"       %% "zio-test-sbt" % ZioVersion % Test,
+      "dev.zio"       %% "zio-schema-zio-test" % ZioSchemaVersion % Test,
       "com.h2database" % "h2"           % H2Version  % Test
     ),
     Test / fork := true,

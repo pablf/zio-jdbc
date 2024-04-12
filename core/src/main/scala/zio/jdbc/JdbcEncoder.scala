@@ -15,8 +15,9 @@
  */
 package zio.jdbc
 
-import zio.Chunk
-import zio.schema.{ Schema, StandardType }
+import zio.{Chunk, Unsafe}
+import zio.schema.{ Derive, Schema, StandardType }
+import zio.schema.Deriver._
 
 /**
  * A type class that describes the ability to convert a value of type `A` into
@@ -30,6 +31,75 @@ trait JdbcEncoder[-A] {
 
 object JdbcEncoder extends JdbcEncoder0LowPriorityImplicits {
   def apply[A](implicit encoder: JdbcEncoder[A]): JdbcEncoder[A] = encoder
+
+  trait Deriver extends zio.schema.Deriver[JdbcEncoder] {
+        def deriveRecord[A](record: Schema.Record[A], fields: => Chunk[WrappedF[JdbcEncoder, _]], summoned: => Option[JdbcEncoder[A]]): JdbcEncoder[A] =
+            Unsafe.unsafe { implicit unsafe =>
+                value => record.deconstruct(value).zip(fields).map {
+                    case (field, encoder) => encoder.unwrap.asInstanceOf[JdbcEncoder[Any]].encode(field)
+                }.reduce(_ ++ SqlFragment.comma ++ _)
+            }
+
+
+        def deriveEnum[A](`enum`: Schema.Enum[A], cases: => Chunk[WrappedF[JdbcEncoder, _]], summoned: => Option[JdbcEncoder[A]]): JdbcEncoder[A] =
+            value => {
+                val encoder = (for {
+                    (c: Schema.Case[A, _], encoder: WrappedF[JdbcEncoder, _]) <- `enum`.cases.zip(cases)
+                    if c.isCase(value)
+                } yield encoder).head
+                encoder.unwrap.asInstanceOf[JdbcEncoder[A]].encode(value)
+            }
+
+        def derivePrimitive[A](st: StandardType[A], summoned: => Option[JdbcEncoder[A]]): JdbcEncoder[A] =
+            st match {
+                case StandardType.StringType     => JdbcEncoder.stringEncoder
+                case StandardType.BoolType       => JdbcEncoder.booleanEncoder
+                case StandardType.ShortType      => JdbcEncoder.shortEncoder
+                case StandardType.IntType        => JdbcEncoder.intEncoder
+                case StandardType.LongType       => JdbcEncoder.longEncoder
+                case StandardType.FloatType      => JdbcEncoder.floatEncoder
+                case StandardType.DoubleType     => JdbcEncoder.doubleEncoder
+                case StandardType.CharType       => JdbcEncoder.charEncoder
+                case StandardType.BigIntegerType => JdbcEncoder.bigIntEncoder
+                case StandardType.BinaryType     => JdbcEncoder.byteChunkEncoder
+                case StandardType.BigDecimalType => JdbcEncoder.bigDecimalEncoder
+                case StandardType.UUIDType       => JdbcEncoder.uuidEncoder
+                // TODO: Standard Types which are missing are the date time types, not sure what would be the best way to handle them
+                case _                           => throw JdbcEncoderError(s"Failed to encode schema ${st}", new IllegalArgumentException)
+            }
+
+        // TODO: review for cases like Option of a tuple
+        def deriveOption[A](option: Schema.Optional[A], inner: => JdbcEncoder[A], summoned: => Option[JdbcEncoder[Option[A]]]): JdbcEncoder[Option[A]] =
+            value => value.fold(SqlFragment.nullLiteral)(inner.encode)
+
+        def deriveSequence[C[_], A](
+            sequence: Schema.Sequence[C[A], A, _],
+            inner: => JdbcEncoder[A],
+            summoned: => Option[JdbcEncoder[C[A]]]
+        ): JdbcEncoder[C[A]] =
+            value => {
+                val seq = sequence.toChunk(value).map(inner.encode)
+                SqlFragment.lparen ++ seq.reduce( _ ++ SqlFragment.comma ++ _ ) ++ SqlFragment.rparen
+            }
+
+        def deriveMap[K, V](
+            map: Schema.Map[K, V],
+            key: => JdbcEncoder[K],
+            value: => JdbcEncoder[V],
+            summoned: => Option[JdbcEncoder[Map[K, V]]]
+        ): JdbcEncoder[Map[K, V]] = 
+            throw JdbcEncoderError(s"Failed to encode schema ${map}", new IllegalArgumentException)
+
+        def deriveTransformedRecord[A, B](
+            record: Schema.Record[A],
+            transform: Schema.Transform[A, B, _],
+            fields: => Chunk[WrappedF[JdbcEncoder, _]],
+            summoned: => Option[JdbcEncoder[B]]
+        ): JdbcEncoder[B] =
+            deriveRecord(record, fields, None).contramap(transform.g.andThen(_.getOrElse(throw JdbcEncoderError(s"Failed to encode schema ${record}", new IllegalArgumentException))))
+    }
+  
+  implicit val deriver: JdbcEncoder.Deriver = new Deriver {}
 
   implicit val intEncoder: JdbcEncoder[Int]                               = value => sql"$value"
   implicit val longEncoder: JdbcEncoder[Long]                             = value => sql"$value"
@@ -636,68 +706,11 @@ object JdbcEncoder extends JdbcEncoder0LowPriorityImplicits {
 }
 
 trait JdbcEncoder0LowPriorityImplicits { self =>
-  private[jdbc] def primitiveCodec[A](standardType: StandardType[A]): JdbcEncoder[A] =
-    standardType match {
-      case StandardType.StringType     => JdbcEncoder.stringEncoder
-      case StandardType.BoolType       => JdbcEncoder.booleanEncoder
-      case StandardType.ShortType      => JdbcEncoder.shortEncoder
-      case StandardType.IntType        => JdbcEncoder.intEncoder
-      case StandardType.LongType       => JdbcEncoder.longEncoder
-      case StandardType.FloatType      => JdbcEncoder.floatEncoder
-      case StandardType.DoubleType     => JdbcEncoder.doubleEncoder
-      case StandardType.CharType       => JdbcEncoder.charEncoder
-      case StandardType.BigIntegerType => JdbcEncoder.bigIntEncoder
-      case StandardType.BinaryType     => JdbcEncoder.byteChunkEncoder
-      case StandardType.BigDecimalType => JdbcEncoder.bigDecimalEncoder
-      case StandardType.UUIDType       => JdbcEncoder.uuidEncoder
-      // TODO: Standard Types which are missing are the date time types, not sure what would be the best way to handle them
-      case _                           => throw JdbcEncoderError(s"Unsupported type: $standardType", new IllegalArgumentException)
-    }
 
-  //scalafmt: { maxColumn = 325, optIn.configStyleArguments = false }
-  def fromSchema[A](implicit schema: Schema[A]): JdbcEncoder[A] =
-    schema match {
-      case Schema.Primitive(standardType, _) =>
-        primitiveCodec(standardType)
-      case Schema.Optional(schema, _)        =>
-        JdbcEncoder.optionEncoder(self.fromSchema(schema))
-      case Schema.Tuple2(left, right, _)     =>
-        JdbcEncoder.tuple2Encoder(self.fromSchema(left), self.fromSchema(right))
-      // format: off
-      case x@(
-        _: Schema.CaseClass1[_, _] |
-        _: Schema.CaseClass2[_, _, _] |
-        _: Schema.CaseClass3[_, _, _, _] |
-        _: Schema.CaseClass4[_, _, _, _, _] |
-        _: Schema.CaseClass5[_, _, _, _, _, _] |
-        _: Schema.CaseClass6[_, _, _, _, _, _, _] |
-        _: Schema.CaseClass7[_, _, _, _, _, _, _, _] |
-        _: Schema.CaseClass8[_, _, _, _, _, _, _, _, _] |
-        _: Schema.CaseClass9[_, _, _, _, _, _, _, _, _, _] |
-        _: Schema.CaseClass10[_, _, _, _, _, _, _, _, _, _, _] |
-        _: Schema.CaseClass11[_, _, _, _, _, _, _, _, _, _, _, _] |
-        _: Schema.CaseClass12[_, _, _, _, _, _, _, _, _, _, _, _, _] |
-        _: Schema.CaseClass13[_, _, _, _, _, _, _, _, _, _, _, _, _, _] |
-        _: Schema.CaseClass14[_, _, _, _, _, _, _, _, _, _, _, _, _, _, _] |
-        _: Schema.CaseClass15[_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _] |
-        _: Schema.CaseClass16[_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _] |
-        _: Schema.CaseClass17[_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _] |
-        _: Schema.CaseClass18[_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _] |
-        _: Schema.CaseClass19[_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _] |
-        _: Schema.CaseClass20[_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _] |
-        _: Schema.CaseClass21[_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _] |
-        _: Schema.CaseClass22[_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _]
-        ) =>
-        // format: on
-        caseClassEncoder(x.asInstanceOf[Schema.Record[A]].fields)
-      case _                                 =>
-        throw JdbcEncoderError(s"Failed to encode schema ${schema}", new IllegalArgumentException)
-    }
+  import zio.schema.Factory
+  import zio.schema.Factory._
 
-  private[jdbc] def caseClassEncoder[A](fields: Chunk[Schema.Field[A, _]]): JdbcEncoder[A] = { (a: A) =>
-    fields.map { f =>
-      val encoder = self.fromSchema(f.schema.asInstanceOf[Schema[Any]])
-      encoder.encode(f.get(a))
-    }.reduce(_ ++ SqlFragment.comma ++ _)
-  }
+  def fromSchema[A: Factory](implicit schema: Schema[A]): JdbcEncoder[A] =
+    implicitly[Factory[A]].derive[JdbcEncoder](JdbcEncoder.deriver)
+
 }

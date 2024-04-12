@@ -16,6 +16,9 @@
 package zio.jdbc
 
 import zio._
+import zio.Unsafe
+import zio.schema.{Schema, StandardType}
+import zio.schema.Deriver._
 
 import java.io._
 import java.sql.{ Array => _, _ }
@@ -91,6 +94,104 @@ object JdbcDecoder extends JdbcDecoderLowPriorityImplicits {
             )
         }
     }
+
+  trait Deriver extends zio.schema.Deriver[JdbcDecoder] {
+        def deriveRecord[A](record: Schema.Record[A], fields: => Chunk[WrappedF[JdbcDecoder, _]], summoned: => Option[JdbcDecoder[A]]): JdbcDecoder[A] =
+            JdbcDecoder(rs =>
+                int => {
+                    val (_, fieldsDecoded) = fields.foldLeft((int, List.empty[Any])) {
+                        case ((inputColumnIndex, decoded), field) => {
+                            val (columnIndex, a) = field.unwrap.unsafeDecode(inputColumnIndex, rs)
+                            (columnIndex, a :: decoded)
+                        }
+                    }
+                    Unsafe.unsafe { implicit unsafe =>
+                        record.construct(Chunk.fromIterable(fieldsDecoded)).getOrElse(throw new Throwable(s"It was not possible to decode using Schema.Record[${record.id}]"))
+                    }
+                }
+            )
+        
+        def deriveEnum[A](`enum`: Schema.Enum[A], cases: => Chunk[WrappedF[JdbcDecoder, _]], summoned: => Option[JdbcDecoder[A]]): JdbcDecoder[A] =
+            JdbcDecoder(rs =>
+                int => {
+                    (
+                        for {
+                            schema <- cases
+                            decoded: Option[Any] = try {
+                                Some(schema.unwrap.unsafeDecode(int, rs)._2)
+                            } catch {
+                                case _: Throwable => None
+                            }
+                            if decoded.isDefined
+                        } yield decoded
+                    ).take(1).headOption match {
+                        case Some(decoded) => decoded.asInstanceOf[A]
+                        case None => throw new Throwable("All cases of enumeration failed to decode")
+                    }
+                }
+            )
+
+        def derivePrimitive[A](st: StandardType[A], summoned: => Option[JdbcDecoder[A]]): JdbcDecoder[A] =
+            st match {
+                case StandardType.StringType     => JdbcDecoder.stringDecoder
+                case StandardType.BoolType       => JdbcDecoder.booleanDecoder
+                case StandardType.ShortType      => JdbcDecoder.shortDecoder
+                case StandardType.IntType        => JdbcDecoder.intDecoder
+                case StandardType.LongType       => JdbcDecoder.longDecoder
+                case StandardType.FloatType      => JdbcDecoder.floatDecoder
+                case StandardType.DoubleType     => JdbcDecoder.doubleDecoder
+                case StandardType.CharType       => JdbcDecoder.stringDecoder.map(_.head)
+                case StandardType.BigIntegerType => JdbcDecoder.longDecoder.map(BigInt(_).asInstanceOf[A])
+                case StandardType.BinaryType     => JdbcDecoder(_.getBytes).map(Chunk.fromArray)
+                case StandardType.BigDecimalType => JdbcDecoder.bigDecimalDecoder
+                case StandardType.UUIDType       => JdbcDecoder.uuidDecoder
+                // TODO: Standard Types which are missing are the date time types, not sure what would be the best way to handle them
+                case _                           => throw new Throwable(s"Unsupported type: $st")
+            }
+
+        def deriveOption[A](option: Schema.Optional[A], inner: => JdbcDecoder[A], summoned: => Option[JdbcDecoder[Option[A]]]): JdbcDecoder[Option[A]] =
+            JdbcDecoder(rs =>
+                int =>
+                    try Some(inner.unsafeDecode(int, rs)._2)
+                    catch {
+                        case _: Throwable => None
+                    }
+                )
+
+        def deriveSequence[C[_], A](
+            sequence: Schema.Sequence[C[A], A, _],
+            inner: => JdbcDecoder[A],
+            summoned: => Option[JdbcDecoder[C[A]]]
+        ): JdbcDecoder[C[A]] =
+             JdbcDecoder(rs =>
+                int => {
+                    var seq = List.empty[A]
+                    val arr = rs.getArray(int).getResultSet()
+                    while(arr.next()) {
+                        val (_, v) = inner.unsafeDecode(2, arr)
+                        seq = v :: seq
+                    }
+                    sequence.fromChunk(Chunk.fromIterable(seq.reverse))
+                    }
+                )
+
+        def deriveMap[K, V](
+            map: Schema.Map[K, V],
+            key: => JdbcDecoder[K],
+            value: => JdbcDecoder[V],
+            summoned: => Option[JdbcDecoder[Map[K, V]]]
+        ): JdbcDecoder[Map[K, V]] = throw new Throwable("")
+
+        def deriveTransformedRecord[A, B](
+            record: Schema.Record[A],
+            transform: Schema.Transform[A, B, _],
+            fields: => Chunk[WrappedF[JdbcDecoder, _]],
+            summoned: => Option[JdbcDecoder[B]]
+        ): JdbcDecoder[B] =
+            deriveRecord(record, fields, None).map(transform.f.andThen(_.getOrElse(throw new Throwable(""))))
+    }
+
+  implicit val deriver: Deriver = new Deriver {}
 
   implicit val intDecoder: JdbcDecoder[Int]                         = JdbcDecoder(_.getInt)
   implicit val longDecoder: JdbcDecoder[Long]                       = JdbcDecoder(_.getLong)
@@ -770,15 +871,16 @@ trait JdbcDecoderLowPriorityImplicits {
   protected def valueOrNone(value: Any, dyn: DynamicValue): DynamicValue =
     if (value != null) dyn else DynamicValue.NoneValue
 
-  def fromSchema[A](implicit schema: Schema[A]): JdbcDecoder[A] =
-    (columnIndex: Int, resultSet: ResultSet) => {
-      val dynamicDecoder = createDynamicDecoder(schema, resultSet.getMetaData())
-      val dynamicValue   = dynamicDecoder(resultSet)
+  import zio.schema.Factory
+  import zio.schema.Factory.factory
+  import scala.reflect.ClassTag
 
-      dynamicValue.toTypedValue(schema) match {
-        case Left(error) => throw JdbcDecoderError(error, null, resultSet.getMetaData(), resultSet.getRow())
+  def fromSchemaAndDeriver[A](implicit f: Factory[A], schema: Schema[A], deriver: zio.schema.Deriver[JdbcDecoder]): JdbcDecoder[A] =
+    f.derive[JdbcDecoder](deriver)
+    
+  def fromSchema[A](implicit f: Factory[A], schema: Schema[A]): JdbcDecoder[A] =
+    fromSchemaAndDeriver(f, schema, JdbcDecoder.deriver)
 
-        case Right(value) => (columnIndex, value)
-      }
-    }
+  def fromSchema[A: ClassTag](schema: Schema[A]): JdbcDecoder[A] =
+    fromSchema(factory[A], schema)
 }
