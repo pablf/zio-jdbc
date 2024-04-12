@@ -4,6 +4,7 @@ import zio._
 import zio.jdbc.SqlFragment.Setter
 import zio.jdbc.{ transaction => transact }
 import zio.schema.{ Schema, TypeId }
+import zio.schema.Factory._
 import zio.test.Assertion._
 import zio.test._
 

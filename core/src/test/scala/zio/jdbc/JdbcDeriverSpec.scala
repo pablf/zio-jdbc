@@ -1,6 +1,6 @@
 package zio.jdbc
 
-import zio._
+//import zio._
 import zio.test._
 
 object JdbcDeriverSpec extends ZIOSpecDefault {
