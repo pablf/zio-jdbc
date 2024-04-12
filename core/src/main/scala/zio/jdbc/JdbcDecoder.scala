@@ -881,6 +881,6 @@ trait JdbcDecoderLowPriorityImplicits {
   def fromSchema[A](implicit f: Factory[A], schema: Schema[A]): JdbcDecoder[A] =
     fromSchemaAndDeriver(f, schema, JdbcDecoder.deriver)
 
-  def fromSchema[A: ClassTag](schema: Schema[A]): JdbcDecoder[A] =
+  def fromSchema[A <: Product : ClassTag](schema: Schema[A]): JdbcDecoder[A] =
     fromSchema(factory[A], schema)
 }

@@ -44,7 +44,7 @@ object JdbcEncoder extends JdbcEncoder0LowPriorityImplicits {
         def deriveEnum[A](`enum`: Schema.Enum[A], cases: => Chunk[WrappedF[JdbcEncoder, _]], summoned: => Option[JdbcEncoder[A]]): JdbcEncoder[A] =
             value => {
                 val encoder = (for {
-                    (c: Schema.Case[A, _], encoder: WrappedF[JdbcEncoder, _]) <- `enum`.cases.zip(cases)
+                    case (c: Schema.Case[A, _], encoder: WrappedF[JdbcEncoder, _]) <- `enum`.cases.zip(cases)
                     if c.isCase(value)
                 } yield encoder).head
                 encoder.unwrap.asInstanceOf[JdbcEncoder[A]].encode(value)
