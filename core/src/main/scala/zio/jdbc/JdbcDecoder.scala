@@ -102,7 +102,7 @@ object JdbcDecoder extends JdbcDecoderLowPriorityImplicits {
                     val (_, fieldsDecoded) = fields.foldLeft((int, List.empty[Any])) {
                         case ((inputColumnIndex, decoded), field) => {
                             val (columnIndex, a) = field.unwrap.unsafeDecode(inputColumnIndex, rs)
-                            (columnIndex, a :: decoded)
+                            (columnIndex + 1, a :: decoded)
                         }
                     }
                     Unsafe.unsafe { implicit unsafe =>
